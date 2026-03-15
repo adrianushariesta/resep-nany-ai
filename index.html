@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Resep Nany</title>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;1,400&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'DM Sans', sans-serif; background: #fdf6ec; color: #3b2a1a; min-height: 100vh; }
+    header { text-align: center; padding: 48px 24px 24px; }
+    header h1 { font-family: 'Playfair Display', serif; font-size: 2.8rem; }
+    header h1 em { font-style: italic; color: #c4622d; }
+    header p { color: #7a5c3e; margin-top: 8px; font-size: 15px; }
+    main { max-width: 640px; margin: 0 auto; padding: 0 20px 80px; }
+    .card { background: #fffbf5; border: 1px solid rgba(59,42,26,0.1); border-radius: 16px; padding: 28px; margin-bottom: 20px; box-shadow: 0 4px 24px rgba(59,42,26,0.08); }
+    label { display: block; font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.08em; color: #7a5c3e; margin-bottom: 8px; }
+    textarea { width: 100%; padding: 14px 16px; border: 1.5px solid rgba(59,42,26,0.15); border-radius: 10px; background: #fdf6ec; font-family: 'DM Sans', sans-serif; font-size: 14px; color: #3b2a1a; resize: none; min-height: 90px; outline: none; }
+    textarea:focus { border-color: #c4622d; }
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 18px; }
+    .chip { padding: 5px 14px; border: 1px solid rgba(59,42,26,0.15); border-radius: 999px; font-size: 12px; color: #7a5c3e; cursor: pointer; background: transparent; font-family: 'DM Sans', sans-serif; }
+    .chip:hover { border-color: #c4622d; color: #c4622d; }
+    button#submitBtn { width: 100%; padding: 14px; background: #c4622d; color: white; border: none; border-radius: 10px; font-family: 'DM Sans', sans-serif; font-size: 15px; font-weight: 500; cursor: pointer; }
+    button#submitBtn:hover:not(:disabled) { background: #5c3d22; }
+    button#submitBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .status { font-size: 13px; color: #7a5c3e; margin-top: 12px; min-height: 20px; }
+    .status.err { color: #c4622d; }
+    #resultCard { display: none; }
+    #resultCard.show { display: block; }
+    .result-content { font-size: 15px; line-height: 1.8; }
+    .result-content h3 { font-family: 'Playfair Display', serif; font-size: 1.15rem; color: #c4622d; margin: 1.25rem 0 0.5rem; }
+    .result-content h3:first-child { margin-top: 0; }
+    .result-content ul { padding-left: 1.25rem; margin: 6px 0 12px; }
+    .result-content li { margin-bottom: 4px; }
+    .result-content p { margin-bottom: 10px; }
+    .result-content hr { border: none; border-top: 1px solid rgba(59,42,26,0.1); margin: 1rem 0; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Resep <em>Nany</em></h1>
+    <p>Masukkan bahan yang kamu punya, kami carikan resepnya.</p>
+  </header>
+  <main>
+    <div class="card">
+      <label>Bahan apa yang ada di dapur kamu?</label>
+      <textarea id="ingredients" placeholder="Contoh: tahu, bawang putih, kecap, cabai..."></textarea>
+      <div class="chips">
+        <span class="chip" onclick="setChip('tahu, tempe, kecap manis')">Tahu & Tempe</span>
+        <span class="chip" onclick="setChip('ayam, bawang putih, jahe, kemiri')">Ayam</span>
+        <span class="chip" onclick="setChip('telur, bawang merah, cabai, tomat')">Telur</span>
+        <span class="chip" onclick="setChip('kentang, wortel, santan')">Sayuran</span>
+        <span class="chip" onclick="setChip('ikan, jeruk nipis, cabai, kunyit')">Ikan</span>
+      </div>
+      <button id="submitBtn" onclick="findRecipes()">Carikan Resep</button>
+      <p class="status" id="status"></p>
+    </div>
+    <div class="card" id="resultCard">
+      <div class="result-content" id="resultContent"></div>
+    </div>
+  </main>
+  <script>
+    const API_URL = 'YOUR_VERCEL_URL/api/suggest';
+
+    function setChip(t) { document.getElementById('ingredients').value = t; }
+
+    function renderMd(text) {
+      return text
+        .replace(/^## (.+)$/gm, '<h3>$1</h3>')
+        .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/^- (.+)$/gm, '<li>$1</li>')
+        .replace(/(<li>.*<\/li>\n?)+/g, m => `<ul>${m}</ul>`)
+        .replace(/^---$/gm, '<hr>')
+        .replace(/\n{2,}/g, '</p><p>');
+    }
+
+    async function findRecipes() {
+      const ingredients = document.getElementById('ingredients').value.trim();
+      if (!ingredients) return setStatus('Tulis dulu bahan-bahan yang kamu punya ya.', true);
+
+      document.getElementById('submitBtn').disabled = true;
+      document.getElementById('resultCard').classList.remove('show');
+      setStatus('Sedang mencari resep dari koleksi Nany...');
+
+      try {
+        const res = await fetch(API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ingredients })
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        document.getElementById('resultContent').innerHTML = renderMd(data.suggestion);
+        document.getElementById('resultCard').classList.add('show');
+        setStatus('');
+      } catch(e) {
+        setStatus(e.message, true);
+      } finally {
+        document.getElementById('submitBtn').disabled = false;
+      }
+    }
+
+    function setStatus(msg, isErr) {
+      const el = document.getElementById('status');
+      el.className = 'status' + (isErr ? ' err' : '');
+      el.textContent = msg;
+    }
+  </script>
+</body>
+</html>
