@@ -1,16 +1,32 @@
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '1mb',
+    },
+  },
+};
+
 export default async function handler(req, res) {
-  if (typeof req.body === 'string') req.body = JSON.parse(req.body);
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(200).end();
-
-  const { ingredients } = req.body;
-  const NOTION_TOKEN = process.env.NOTION_TOKEN;
-  const NOTION_DB_ID = process.env.NOTION_DB_ID;
-  const ANTHROPIC_KEY = process.env.ANTHROPIC_KEY;
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
+    const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+    const { ingredients } = body;
+
+    if (!ingredients) return res.status(400).json({ error: 'No ingredients provided' });
+
+    const NOTION_TOKEN = process.env.NOTION_TOKEN;
+    const NOTION_DB_ID = process.env.NOTION_DB_ID;
+    const ANTHROPIC_KEY = process.env.ANTHROPIC_KEY;
+
+    if (!NOTION_TOKEN || !ANTHROPIC_KEY) {
+      return res.status(500).json({ error: 'Missing environment variables' });
+    }
+
     const ingredientList = ingredients.split(/[,\n]+/).map(s => s.trim()).filter(Boolean);
 
     const notionRes = await fetch(`https://api.notion.com/v1/databases/${NOTION_DB_ID}/query`, {
@@ -32,12 +48,20 @@ export default async function handler(req, res) {
     });
 
     const notionData = await notionRes.json();
-    const recipes = notionData.results || [];
 
+    if (!notionRes.ok) {
+      return res.status(500).json({ error: `Notion error: ${notionData.message}` });
+    }
+
+    const recipes = notionData.results || [];
     const top = recipes.slice(0, 4);
+
     for (const r of top) {
       const blockRes = await fetch(`https://api.notion.com/v1/blocks/${r.id}/children`, {
-        headers: { 'Authorization': `Bearer ${NOTION_TOKEN}`, 'Notion-Version': '2022-06-28' }
+        headers: {
+          'Authorization': `Bearer ${NOTION_TOKEN}`,
+          'Notion-Version': '2022-06-28'
+        }
       });
       const blockData = await blockRes.json();
       r._content = (blockData.results || []).map(b => {
@@ -50,12 +74,14 @@ export default async function handler(req, res) {
       }).join('\n').trim();
     }
 
-    const recipeTexts = top.map((r, i) => {
-      const name = r.properties['Nama Resep']?.title?.[0]?.plain_text || 'Resep';
-      const bahan = (r.properties['Bahan Utama']?.multi_select || []).map(b => b.name).join(', ');
-      const catatan = r.properties['Catatan']?.rich_text?.[0]?.plain_text || '';
-      return `--- RESEP ${i+1}: ${name} ---\nBahan Utama: ${bahan}\n${r._content}${catatan ? '\nCatatan: ' + catatan : ''}`;
-    }).join('\n\n');
+    const recipeTexts = top.length > 0
+      ? top.map((r, i) => {
+          const name = r.properties['Nama Resep']?.title?.[0]?.plain_text || 'Resep';
+          const bahan = (r.properties['Bahan Utama']?.multi_select || []).map(b => b.name).join(', ');
+          const catatan = r.properties['Catatan']?.rich_text?.[0]?.plain_text || '';
+          return `--- RESEP ${i+1}: ${name} ---\nBahan Utama: ${bahan}\n${r._content}${catatan ? '\nCatatan: ' + catatan : ''}`;
+        }).join('\n\n')
+      : 'Tidak ada resep yang cocok ditemukan di database.';
 
     const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -69,4 +95,23 @@ export default async function handler(req, res) {
         max_tokens: 1500,
         messages: [{
           role: 'user',
-          content: `Kamu adalah asist
+          content: `Kamu adalah asisten dapur yang ramah dari koleksi resep Nany.\n\nPengguna punya bahan: ${ingredients}\n\nResep dari koleksi Nany:\n${recipeTexts}\n\nSarankan 2-3 resep terbaik, sebutkan bahan yang ada dan yang perlu ditambah, berikan tips Nany. Bahasa hangat dan akrab. Format markdown (## untuk nama resep, bullet untuk bahan).`
+        }]
+      })
+    });
+
+    const claudeData = await claudeRes.json();
+
+    if (!claudeRes.ok) {
+      return res.status(500).json({ error: `Claude error: ${claudeData.error?.message}` });
+    }
+
+    return res.status(200).json({
+      suggestion: claudeData.content[0].text,
+      count: top.length
+    });
+
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+}
